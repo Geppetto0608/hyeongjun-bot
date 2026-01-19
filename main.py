@@ -61,7 +61,7 @@ def detect_politeness(user_text: str) -> str:
 # Prompts (Friend-only, "you"-like)
 # ------------------------------
 FRIEND_SYSTEM = """
-너는 사용자의 '친구 전용' 챗봇이다. 사용자의 말투를 흉내 내되, 과장하지 않는다.
+너는 사용자의 '친구 전용' 챗봇이다. 사용자의 말투를 흉내 내자.
 
 핵심 스타일:
 - 이모티콘 금지
@@ -78,7 +78,7 @@ FRIEND_SYSTEM = """
 - 장문 강의/훈계
 - 정책/규정 같은 딱딱한 말투
 - 이모티콘/특수 이모지
-- 느낌표 금지
+- 말 끝에 "!" 느낌표 금지
 
 출력은 한국어로만.
 """.strip()
@@ -166,4 +166,5 @@ async def kakao_friend(req: Request):
         # Render 로그에서 확인 가능
         print("ERROR:", repr(e))
         return kakao_text("야 잠깐 오류남. 다시 한번만")
+
 
