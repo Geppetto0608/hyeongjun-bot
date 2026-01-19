@@ -1,8 +1,9 @@
 import os
 import re
+import asyncio
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from openai import OpenAI
+from openai import AsyncOpenAI  # 비동기 클라이언트 사용
 
 app = FastAPI()
 
@@ -68,7 +69,7 @@ def build_messages(user_text: str) -> list[dict]:
         {"role": "user", "content": user_text},
     ]
 
-# --- 3. 실행 로직 ---
+# --- 3. 비동기 처리 로직 (속도 개선 핵심) ---
 
 @app.post("/kakao/lover")
 async def kakao_friend(req: Request):
@@ -78,29 +79,36 @@ async def kakao_friend(req: Request):
 
         if not user_text: return kakao_text("?")
 
-        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        # ★ 핵심 변경점: AsyncOpenAI 사용 (여러 명 동시 처리 가능)
+        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
         try:
-            # ★ 3.5초 타임아웃: 이 시간이 지나면 바로 끊고 "다시 말해줘"라고 함
-            res = client.chat.completions.create(
-                model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-                messages=build_messages(user_text),
-                max_tokens=70,
-                temperature=0.6,
-                timeout=3.5, 
+            # 3.5초 타임아웃 제한 (비동기 방식)
+            res = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                    messages=build_messages(user_text),
+                    max_tokens=70,
+                    temperature=0.6,
+                ),
+                timeout=3.5
             )
             answer = res.choices[0].message.content.strip()
 
-        except Exception:
-            # ★ 실패 시 나가는 멘트 (사용자가 다시 보내도록 유도)
+        except asyncio.TimeoutError:
+            # 시간이 초과되면 서버가 멈추지 않고 바로 이 메시지를 뱉음
             return kakao_text("아.. 방금 깼음. 다시 말해줘.")
+        except Exception as e:
+            print(f"OpenAI Error: {e}")
+            return kakao_text("아.. 잠만.. 오류남.")
 
         # 성공 시 처리
         answer = strip_emojis(answer)
         answer = collapse_lines(answer, max_lines=3)
         return kakao_text(answer)
 
-    except Exception:
+    except Exception as e:
+        print(f"System Error: {e}")
         return kakao_text("오류.")
 
 @app.post("/kakao/lover/")
