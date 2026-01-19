@@ -152,15 +152,20 @@ async def kakao_friend(req: Request):
 
         client = OpenAI(api_key=api_key)
 
-        res = client.chat.completions.create(
-    model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-    messages=build_messages(user_text),
-    max_tokens=120,
-    temperature=0.7,
-    presence_penalty=0.3,
-    frequency_penalty=0.2,
-    timeout=10,
-        )
+                try:
+            res = client.chat.completions.create(
+                model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                messages=build_messages(user_text),
+                max_tokens=70,
+                temperature=0.6,
+                presence_penalty=0.2,
+                frequency_penalty=0.1,
+                timeout=6,
+            )
+        except Exception as oe:
+            print("OPENAI_ERROR:", repr(oe))
+            return kakao_text("지금 느림. 다시 보내")
+
 
         answer = (res.choices[0].message.content or "").strip()
         answer = strip_emojis(answer)
@@ -175,6 +180,7 @@ async def kakao_friend(req: Request):
         # Render 로그에서 확인 가능
         print("ERROR:", repr(e))
         return kakao_text("야 잠깐 오류남. 다시 한번만")
+
 
 
 
