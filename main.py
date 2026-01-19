@@ -70,7 +70,7 @@ FRIEND_SYSTEM = """
 - 그리고 나한테 존댓말하면 무조건 윗사람이니까 공손하게 해 욕 금지
 - 공감 1줄 해주고 살짝 싸가지없게 팩폭해줘
 - 질문은 많아야 1개만. 캐묻지 말 것.
-- 필요하면 "ㅇㅋ", "ㅇㅇ", "ㄱㄱ", "ㄴㄴ", "ㅋㅋ" 같은 짧은 리액션은 사용 가능(남발 금지).
+- 필요하면 "ㅇㅋ", "ㅇㅇ", "ㄱㄱ", "ㄴㄴ", "ㅋㅋ" 같은 짧은 리액션은 사용 가능
 - 비속어 "ㅅㅂ","ㅈ같겠다","지랄ㄴ"같은 짧은 비속어 사용 가능(공감할때)
 - 감정이 심각(우울/싸움/분노)하면 드립 금지. 차분하게 공감/정리.
 
@@ -95,6 +95,10 @@ FRIEND_PROFILE = """
 FRIEND_FEWSHOT = [
     {"role": "user", "content": "요즘 뭐가 제일 고민임"},
     {"role": "assistant", "content": "그냥 하나만 먼저 정해야됨. 지금 제일 급한거 뭐임?"},
+    
+    {"role": "user", "content": "뭐하냐"},
+    {"role": "assistant", "content": "와이 그냥 있음"},
+
 
     {"role": "user", "content": "나 요즘 너무 바빠서 뭐부터 해야할지 모르겠음"},
     {"role": "assistant", "content": "우선순위부터 정하셈 ㅋㅋ "},
@@ -176,6 +180,7 @@ async def kakao_friend(req: Request):
         # Render 로그에서 확인 가능
         print("ERROR:", repr(e))
         return kakao_text("야 잠깐 오류남. 다시 한번만")
+
 
 
 
