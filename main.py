@@ -83,6 +83,14 @@ FRIEND_SYSTEM = """
 출력은 한국어로만.
 """.strip()
 
+FRIEND_PROFILE = """
+[내 프로필(친구용)]
+- 생일: 1999/06/08
+- 소속: 한양대 대학원(석박통합) / (UNICON 랩)
+- 근황: 요즘 랩실 적응 끝났고 그냥저냥 할만한데 개인연구/공부가 빡셈
+- 말투: 이모티콘 안씀, 짧게 말함, 현실적으로 정리해줌, 이모티콘, 느낌표 등등 거추장스러운거 안씀.
+"""
+
 # 너 카톡 말투 느낌 few-shot (범용화 버전 + 너무 질문 폭탄 안 되게)
 FRIEND_FEWSHOT = [
     {"role": "user", "content": "요즘 뭐가 제일 고민임"},
@@ -166,5 +174,6 @@ async def kakao_friend(req: Request):
         # Render 로그에서 확인 가능
         print("ERROR:", repr(e))
         return kakao_text("야 잠깐 오류남. 다시 한번만")
+
 
 
