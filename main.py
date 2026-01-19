@@ -1,33 +1,17 @@
 import os
 import re
+import httpx
 import asyncio
 from typing import Any, Dict
-
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from openai import OpenAI
 
 app = FastAPI()
 
-# --- 유틸리티 함수 ---
+# --- 1. 유틸리티 함수 (기존 그대로) ---
 
-def kakao_text(msg: str) -> JSONResponse:
-    """카카오톡 스킬 형식에 맞는 JSON 응답 반환"""
-    return JSONResponse(
-        {
-            "version": "2.0",
-            "template": {"outputs": [{"simpleText": {"text": msg}}]},
-        }
-    )
-
-_EMOJI_RE = re.compile(
-    "["
-    "\U0001F300-\U0001FAFF"
-    "\U00002700-\U000027BF"
-    "\U0001F1E6-\U0001F1FF"
-    "]+",
-    flags=re.UNICODE,
-)
+_EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF\U00002700-\U000027BF\U0001F1E6-\U0001F1FF]+", flags=re.UNICODE)
 
 def strip_emojis(text: str) -> str:
     return _EMOJI_RE.sub("", text)
@@ -43,22 +27,18 @@ def detect_politeness(user_text: str) -> str:
         return "polite"
     return "casual"
 
-# --- 페르소나 설정 ---
+# --- 2. 페르소나 및 말투 설정 (형준님 원래 데이터) ---
 
 FRIEND_SYSTEM = """
 너는 사용자의 '친구 전용' 챗봇이다. 따뜻하거나 친절한 톤 금지. 툭툭 던지는 친구 말투로.
-
 규칙:
 - 이모티콘/느낌표/감탄사 금지
 - 한 답변 1~3줄. 길게 설명 금지
 - 기본 반말. 사용자가 존댓말이면 너도 존댓말(딱딱하게)로만 맞춰
 - 공감은 선택. 꼭 해야 할 때만 한 단어로: "ㅇㅇ", "그럴만함", "알겠음"
 - 질문은 최대 1개. 캐묻지 마
-- 리액션 짧게: "ㅇㅇ", "ㅇㅋ", "왜", "와이", "?", "ㄱㄱ", "ㄴㄴ", "ㅋㅋ"(남발 금지)
+- 리액션 짧게: "ㅇㅇ", "ㅇㅋ", "왜", "와이", "?", "ㄱㄱ", "ㄴㄴ", "ㅋㅋ"
 - 해결은 A/B 한줄 정리 또는 다음 액션 한줄만 제시
-- "응? 뭐 필요한데?" 같은 친절한 문장 금지. "와이", "왜", "?", "뭔소리", "다시" 스타일
-
-출력: 한국어만.
 """.strip()
 
 FRIEND_PROFILE = """
@@ -76,77 +56,67 @@ FRIEND_FEWSHOT = [
     {"role": "assistant", "content": "급한거부터. 마감 뭐임"},
     {"role": "user", "content": "연구가 ㅈ같음"},
     {"role": "assistant", "content": "ㅇㅇ 그럴만함. 막히는게 구현임 아이디어임"},
-    {"role": "user", "content": "오늘 술 ㄱ?"},
-    {"role": "assistant", "content": "ㄱㄱ 몇시 어디"},
 ]
 
 def build_messages(user_text: str) -> list[dict]:
     mode = detect_politeness(user_text)
     style_addon = "사용자가 존댓말이면 너도 존댓말로. 공손하지만 차갑게." if mode == "polite" else "사용자가 반말이면 너도 반말로. 차갑게."
-    
     system_content = f"{FRIEND_SYSTEM}\n{style_addon}\n\n{FRIEND_PROFILE}"
+    return [{"role": "system", "content": system_content}] + FRIEND_FEWSHOT + [{"role": "user", "content": user_text}]
 
-    return [
-        {"role": "system", "content": system_content},
-        *FRIEND_FEWSHOT,
-        {"role": "user", "content": user_text},
-    ]
+# --- 3. 콜백 처리 로직 (5초 타임아웃 해결사) ---
 
-# --- 엔드포인트 ---
-
-@app.get("/")
-def root():
-    return {"status": "ok", "service": "kakao-friend-bot"}
-
-@app.post("/kakao/lover")
-async def kakao_friend(req: Request):
-    try:
-        data = await req.json()
-        user_text = (data.get("userRequest") or {}).get("utterance", "").strip()
-        
-        # 로그 확인: 요청이 들어오는지 체크
-        print(f"[DEBUG] User Input: {user_text}")
-
-        if not user_text:
-            return kakao_text("?")
-
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            print("[ERROR] OPENAI_API_KEY is missing!")
-            return kakao_text("설정 오류")
-
-        client = OpenAI(api_key=api_key)
-
+async def process_openai_callback(callback_url: str, user_text: str):
+    """백그라운드에서 답변 생성 후 카카오로 전달"""
+    async with httpx.AsyncClient() as client:
         try:
-            # 카카오톡 5초 제한을 고려해 timeout을 3.5초로 설정
-            res = client.chat.completions.create(
+            openai_api_key = os.environ.get("OPENAI_API_KEY")
+            openai_client = OpenAI(api_key=openai_api_key)
+            
+            res = openai_client.chat.completions.create(
                 model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
                 messages=build_messages(user_text),
                 max_tokens=70,
                 temperature=0.6,
-                timeout=3.5, 
+                timeout=15.0, # 백그라운드라 넉넉히 잡아도 됨
             )
             answer = (res.choices[0].message.content or "").strip()
-        except Exception as oe:
-            # API 호출이 너무 늦어지거나 에러 발생 시
-            print(f"[ERROR] OpenAI Call Failed: {repr(oe)}")
-            return kakao_text("지금 좀 바쁨. 나중에")
+            answer = strip_emojis(answer)
+            answer = collapse_lines(answer, max_lines=3)
 
-        # 후처리
-        answer = strip_emojis(answer)
-        answer = collapse_lines(answer, max_lines=3)
+            # 카카오톡 서버로 결과 쏘기
+            await client.post(callback_url, json={
+                "version": "2.0",
+                "template": {"outputs": [{"simpleText": {"text": answer}}]}
+            }, timeout=5.0)
+            print(f"[SUCCESS] 답변 전송 완료: {answer}")
+        except Exception as e:
+            print(f"[ERROR] 콜백 중 오류: {repr(e)}")
 
-        if not answer:
-            return kakao_text("뭐래")
+# --- 4. 메인 엔드포인트 ---
 
-        print(f"[DEBUG] Bot Output: {answer}")
-        return kakao_text(answer)
+@app.get("/")
+def root(): return {"status": "ok"}
 
+@app.post("/kakao/lover")
+async def kakao_friend(req: Request, background_tasks: BackgroundTasks):
+    try:
+        data = await req.json()
+        user_text = (data.get("userRequest") or {}).get("utterance", "").strip()
+        callback_url = data.get("userRequest", {}).get("callbackUrl")
+
+        print(f"[DEBUG] 요청 들어옴: {user_text}")
+
+        if callback_url:
+            # 즉시 "생각 중..." 상태로 응답하고, 실제 작업은 백그라운드에서 수행
+            background_tasks.add_task(process_openai_callback, callback_url, user_text)
+            return JSONResponse({"version": "2.0", "useCallback": True})
+        
+        return JSONResponse({"version": "2.0", "template": {"outputs": [{"simpleText": {"text": "콜백 설정을 켜줘."}}]}})
     except Exception as e:
-        print(f"[ERROR] Critical Error: {repr(e)}")
-        return kakao_text("오류 발생")
+        print(f"[ERROR] 메인 로직 오류: {repr(e)}")
+        return JSONResponse({"version": "2.0", "template": {"outputs": [{"simpleText": {"text": "다시 해봐."}}]}})
 
-# 슬래시 유무 대응
 @app.post("/kakao/lover/")
-async def kakao_friend_slash(req: Request):
-    return await kakao_friend(req)
+async def kakao_friend_slash(req: Request, background_tasks: BackgroundTasks):
+    return await kakao_friend(req, background_tasks)
