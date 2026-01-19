@@ -9,9 +9,6 @@ from openai import OpenAI
 app = FastAPI()
 
 
-# ------------------------------
-# Kakao response helper
-# ------------------------------
 def kakao_text(msg: str) -> JSONResponse:
     return JSONResponse(
         {
@@ -21,9 +18,6 @@ def kakao_text(msg: str) -> JSONResponse:
     )
 
 
-# ------------------------------
-# Style helpers
-# ------------------------------
 _EMOJI_RE = re.compile(
     "["
     "\U0001F300-\U0001FAFF"
@@ -33,14 +27,15 @@ _EMOJI_RE = re.compile(
     flags=re.UNICODE,
 )
 
+
 def strip_emojis(text: str) -> str:
     return _EMOJI_RE.sub("", text)
 
+
 def collapse_lines(text: str, max_lines: int = 3) -> str:
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    if not lines:
-        return ""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
     return "\n".join(lines[:max_lines]).strip()
+
 
 def detect_politeness(user_text: str) -> str:
     t = (user_text or "").strip()
@@ -50,9 +45,6 @@ def detect_politeness(user_text: str) -> str:
     return "casual"
 
 
-# ------------------------------
-# Prompts
-# ------------------------------
 FRIEND_SYSTEM = """
 너는 사용자의 '친구 전용' 챗봇이다. 따뜻하거나 친절한 톤 금지. 툭툭 던지는 친구 말투로.
 
@@ -64,7 +56,7 @@ FRIEND_SYSTEM = """
 - 질문은 최대 1개. 캐묻지 마
 - 리액션 짧게: "ㅇㅇ", "ㅇㅋ", "왜", "와이", "?", "ㄱㄱ", "ㄴㄴ", "ㅋㅋ"(남발 금지)
 - 해결은 A/B 한줄 정리 또는 다음 액션 한줄만 제시
-- 말투는 "응? 뭐 필요한데?" 같은 친절한 문장 금지. "와이", "왜", "?", "뭔소리", "다시" 같은 스타일
+- "응? 뭐 필요한데?" 같은 친절한 문장 금지. "와이", "왜", "?", "뭔소리", "다시" 스타일
 
 출력: 한국어만.
 """.strip()
@@ -88,6 +80,7 @@ FRIEND_FEWSHOT = [
     {"role": "assistant", "content": "ㄱㄱ 몇시 어디"},
 ]
 
+
 def build_messages(user_text: str) -> list[dict]:
     mode = detect_politeness(user_text)
 
@@ -105,21 +98,20 @@ def build_messages(user_text: str) -> list[dict]:
     ]
 
 
-# ------------------------------
-# Routes
-# ------------------------------
 @app.get("/")
 def root() -> Dict[str, Any]:
     return {"status": "ok", "service": "kakao-friend-bot"}
+
 
 @app.head("/")
 def root_head() -> Dict[str, Any]:
     return {"status": "ok"}
 
-# 카카오 검증/헬스체크가 GET/HEAD로 올 때 405 막기
+
 @app.get("/kakao/lover")
 def kakao_lover_get() -> Dict[str, Any]:
     return {"ok": True}
+
 
 @app.head("/kakao/lover")
 def kakao_lover_head() -> Dict[str, Any]:
@@ -130,8 +122,8 @@ def kakao_lover_head() -> Dict[str, Any]:
 async def kakao_friend(req: Request):
     try:
         data = await req.json()
-        user_text = (data.get("userRequest", {}) or {}).get("utterance", "")
-        user_text = (user_text or "").strip()
+        user_text = (data.get("userRequest") or {}).get("utterance") or ""
+        user_text = user_text.strip()
 
         if not user_text:
             return kakao_text("?")
@@ -142,7 +134,6 @@ async def kakao_friend(req: Request):
 
         client = OpenAI(api_key=api_key)
 
-        # OpenAI가 느리면 카카오 타임아웃(1001) 나니까 빨리 실패하고 짧게 응답
         try:
             res = client.chat.completions.create(
                 model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
@@ -162,7 +153,7 @@ async def kakao_friend(req: Request):
         answer = collapse_lines(answer, max_lines=3)
 
         if not answer:
-            answer = "다시"
+            return kakao_text("다시")
 
         return kakao_text(answer)
 
@@ -171,7 +162,6 @@ async def kakao_friend(req: Request):
         return kakao_text("오류. 다시")
 
 
-# trailing slash로 들어오는 경우도 허용
 @app.post("/kakao/lover/")
 async def kakao_friend_slash(req: Request):
     return await kakao_friend(req)
