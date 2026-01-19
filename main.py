@@ -116,8 +116,10 @@ def build_messages(user_text: str) -> list[dict]:
     else:
         style_addon = "\n사용자가 반말이면 너도 반말로 답해."
 
+
+    system_content = FRIEND_SYSTEM + style_addon + "\n\n" + FRIEND_PROFILE
     return [
-        {"role": "system", "content": FRIEND_SYSTEM + style_addon},
+        {"role": "system", "content": FRIEND_SYSTEM},
         *FRIEND_FEWSHOT,
         {"role": "user", "content": user_text},
     ]
@@ -174,6 +176,7 @@ async def kakao_friend(req: Request):
         # Render 로그에서 확인 가능
         print("ERROR:", repr(e))
         return kakao_text("야 잠깐 오류남. 다시 한번만")
+
 
 
 
