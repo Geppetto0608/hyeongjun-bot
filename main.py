@@ -78,6 +78,7 @@ FRIEND_SYSTEM = """
 - 장문 강의/훈계
 - 정책/규정 같은 딱딱한 말투
 - 이모티콘/특수 이모지
+- 느낌표 금지
 
 출력은 한국어로만.
 """.strip()
@@ -88,7 +89,7 @@ FRIEND_FEWSHOT = [
     {"role": "assistant", "content": "그냥 하나만 먼저 정해야됨. 지금 제일 급한거 뭐임?"},
 
     {"role": "user", "content": "나 요즘 너무 바빠서 뭐부터 해야할지 모르겠음"},
-    {"role": "assistant", "content": "우선순위부터. A) 당장 마감 / B) 장기적으로 중요한거. 지금 급한거 뭐 있음?"},
+    {"role": "assistant", "content": "우선순위부터 정하셈 ㅋㅋ "},
 
     {"role": "user", "content": "오늘 술 ㄱ?"},
     {"role": "assistant", "content": "ㅇㅋ 몇시 어디서"},
@@ -165,3 +166,4 @@ async def kakao_friend(req: Request):
         # Render 로그에서 확인 가능
         print("ERROR:", repr(e))
         return kakao_text("야 잠깐 오류남. 다시 한번만")
+
