@@ -1,20 +1,19 @@
 import os
 import re
 import asyncio
-from fastapi import FastAPI, Request
+import httpx
+from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
-from openai import AsyncOpenAI  # 비동기 클라이언트 사용
+from openai import AsyncOpenAI
 
 app = FastAPI()
 
 # --- 1. 유틸리티 ---
-def kakao_text(msg: str) -> JSONResponse:
-    return JSONResponse(
-        {
-            "version": "2.0",
-            "template": {"outputs": [{"simpleText": {"text": msg}}]},
-        }
-    )
+def kakao_text(msg: str) -> dict:
+    return {
+        "version": "2.0",
+        "template": {"outputs": [{"simpleText": {"text": msg}}]},
+    }
 
 _EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF\U00002700-\U000027BF\U0001F1E6-\U0001F1FF]+", flags=re.UNICODE)
 
@@ -69,48 +68,76 @@ def build_messages(user_text: str) -> list[dict]:
         {"role": "user", "content": user_text},
     ]
 
-# --- 3. 비동기 처리 로직 (속도 개선 핵심) ---
-
-@app.post("/kakao/lover")
-async def kakao_friend(req: Request):
+# --- 3. 백그라운드 작업 (핵심: 콜백 보내기) ---
+async def background_process(callback_url: str, user_text: str):
+    client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    
     try:
-        data = await req.json()
-        user_text = (data.get("userRequest") or {}).get("utterance", "").strip()
-
-        if not user_text: return kakao_text("?")
-
-        # ★ 핵심 변경점: AsyncOpenAI 사용 (여러 명 동시 처리 가능)
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
-        try:
-            # 3.5초 타임아웃 제한 (비동기 방식)
-            res = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-                    messages=build_messages(user_text),
-                    max_tokens=70,
-                    temperature=0.6,
-                ),
-                timeout=3.5
-            )
-            answer = res.choices[0].message.content.strip()
-
-        except asyncio.TimeoutError:
-            # 시간이 초과되면 서버가 멈추지 않고 바로 이 메시지를 뱉음
-            return kakao_text("아.. 방금 깼음. 다시 말해줘.")
-        except Exception as e:
-            print(f"OpenAI Error: {e}")
-            return kakao_text("아.. 잠만.. 오류남.")
-
-        # 성공 시 처리
+        # OpenAI 호출 (이제 시간 제한 걱정 없음. 30초 걸려도 됨)
+        res = await client.chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=build_messages(user_text),
+            max_tokens=80,
+            temperature=0.6,
+        )
+        answer = res.choices[0].message.content.strip()
         answer = strip_emojis(answer)
         answer = collapse_lines(answer, max_lines=3)
-        return kakao_text(answer)
+
+        # ★ 카카오 서버로 답변 전송 (POST)
+        async with httpx.AsyncClient() as http_client:
+            await http_client.post(
+                callback_url,
+                json=kakao_text(answer),
+                timeout=10.0
+            )
+            print(f"[Callback Success] Sent: {answer}")
 
     except Exception as e:
-        print(f"System Error: {e}")
-        return kakao_text("오류.")
+        print(f"[Callback Error] {e}")
+
+# --- 4. 메인 엔드포인트 ---
+@app.post("/kakao/lover")
+async def kakao_friend(req: Request, background_tasks: BackgroundTasks):
+    try:
+        data = await req.json()
+        user_request = data.get("userRequest", {})
+        user_text = user_request.get("utterance", "").strip()
+        callback_url = user_request.get("callbackUrl")  # ★ 카카오가 준 '답장 주소'
+
+        if not user_text:
+            return JSONResponse(kakao_text("?"))
+
+        # 1. 콜백 URL이 있으면 -> "useCallback: true" 먼저 뱉고 뒤에서 처리
+        if callback_url:
+            print(f"[Async] Background Task Started for: {user_text}")
+            background_tasks.add_task(background_process, callback_url, user_text)
+            
+            # ★ 카카오에게: "알겠어, 곧 보낼게" (즉시 응답)
+            return JSONResponse({
+                "version": "2.0",
+                "useCallback": True
+            })
+
+        # 2. 콜백 URL이 없으면 (테스트 환경 등) -> 그냥 기다려서 답함
+        else:
+            print("[Sync] No Callback URL. Processing directly.")
+            client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+            res = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=build_messages(user_text),
+                max_tokens=80,
+                temperature=0.6,
+                timeout=4.0 
+            )
+            answer = strip_emojis(res.choices[0].message.content.strip())
+            return JSONResponse(kakao_text(answer))
+
+    except Exception as e:
+        print(f"[Error] {e}")
+        # 콜백 모드일 땐 여기서 에러 리턴해도 사용자한텐 안 보임 (이미 useCallback 나감)
+        return JSONResponse(kakao_text("오류."))
 
 @app.post("/kakao/lover/")
-async def kakao_friend_slash(req: Request):
-    return await kakao_friend(req)
+async def kakao_friend_slash(req: Request, background_tasks: BackgroundTasks):
+    return await kakao_friend(req, background_tasks)
